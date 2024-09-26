@@ -1,0 +1,37 @@
+Scenario:
+Your organization uses AWS for hosting critical data and applications. An incident has been reported involving unauthorized data access and potential exfiltration. The organization's security team has detected unusual activities and needs to investigate the incident to understand the scope, identify the attacker, and prevent further data breaches.
+
+Q1 - Knowing which user account was compromised is essential for understanding the attacker's initial entry point into the environment. What is the username of the compromised user?
+index=aws_cloudtrail  eventName=ConsoleLogin (responseElements.ConsoleLogin="Failure" OR responseElements.ConsoleLogin="Success")
+| eval status=if(eventName="ConsoleLogin", "failed","success")
+| stats count by userIdentity.userName, status
+| eval compromised=if(count>5 AND status="failed", "potentially compromised", "normal")
+| where compromised="potentially compromised"
+
+Q2 - We must investigate the events following the initial compromise to understand the attacker's motives. What's the UTC timestamp of the attacker's first access to an S3 object?
+index=aws_cloudtrail  eventName=GetObject userIdentity.userName=helpdesk.luke
+| eval _time_UTC = _time - (strptime("2000-01-01 +00:00", "%F %:z") - strptime("2000-01-01 " . strftime(_time,"%:z"), "%F %Z")) 
+| eval time_in_UTC = strftime(_time_UTC, "%F %T UTC") 
+| stats earliest(time_in_UTC) by eventName  userIdentity.userName
+
+
+Q3 -  Among the S3 buckets accessed by the attacker, one contains a DWG file. What is the name of this bucket?
+index=aws_cloudtrail  eventName=GetObject userIdentity.userName=helpdesk.luke
+| rename requestParameters.key as "Object Name",  requestParameters.bucketName as "Bucket Name"
+| table "Object Name" "Bucket Name"
+
+
+Q4 - We've identified changes to a bucket's configuration that allowed public access, a significant security concern. What is the name of this particular S3 bucket?
+index=aws_cloudtrail sourcetype="aws:cloudtrail" (eventName=PutBucketAcl OR eventName=PutBucketPolicy OR eventName=PutBucketPublicAccessBlock OR eventName=DeleteBucketPolicy OR eventName=DeleteBucketPublicAccessBlock)
+| table eventTime, eventName, userIdentity.userName, requestParameters.bucketName, requestParameters.PublicAccessBlockConfiguration.RestrictPublicBuckets requestParameters.PublicAccessBlockConfiguration.BlockPublicAcls
+
+Q5 - Creating a new user account is a common tactic attackers use to establish persistence in a compromised environment. What is the username of the account created by the attacker?
+index=aws_cloudtrail sourcetype="aws:cloudtrail" eventName=CreateUser
+| rename userIdentity.userName as "Created By" responseElements.user.userName as "User Created Name"
+| table eventName "Created By" "User Created Name"
+
+Q6 - Following account creation, the attacker added the account to a specific group. What is the name of the group to which the account was added?
+index=aws_cloudtrail sourcetype="aws:cloudtrail" eventName=CreateUser OR eventName="addUserToGroup"
+| rename userIdentity.userName as "Created By" responseElements.user.userName as "User Created Name" requestParameters.groupName as "Group Name"
+| table _time eventName "Created By" "User Created Name" "Group Name"
+
